@@ -138,16 +138,18 @@ Screenshots (captured live, stored in `reports/screenshots/`):
 
 | File | Shows |
 |---|---|
-| `app_live.png` | Dark-themed inputs, one-click presets, win-probability headline |
-| `app_stats.png` | Two-tone team-coloured win bar, verdict line, CRR/RRR/runs/balls cards |
+| `app_live.png` | Dark-themed inputs with tooltips, form/venue context, one-click presets |
+| `app_stats.png` | Prediction dashboard: scoreboard chips, team-coloured gauge, two-tone win bar, verdict |
 | `app_outlook.png` | Chase outlook: win probability over the next overs under three scoring-rate scenarios |
 | `app_drivers.png` | "What drives this prediction" + what-if table with point deltas |
 | `app_thriller.png` | The "Final-over thriller" preset: 14 needed off 3 balls → 0.7% |
 | `app_replay.png` | Match replay: team-coloured probability curve with wicket markers |
 | `app_model_card.png` | Model card tab: split design, measured metrics, drivers, limitations |
 
-Other app features: venue context (historical chase win rate at the selected
-ground), team rolling-form captions, and a copyable match summary block.
+Other app features: a broadcast-style scoreboard strip (target / score / overs /
+needed), a required-rate delta chip (green when the batting side is winning the
+rate battle), venue context (historical chase win rate at the selected ground),
+team rolling-form captions, and a copyable match summary block.
 
 Re-capture after deployment if you restyle anything, and replace the live-app
 placeholder at the top.

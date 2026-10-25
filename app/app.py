@@ -20,8 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import matplotlib.pyplot as plt  # noqa: E402  (Agg backend set by src.evaluate)
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
+from matplotlib.patches import Wedge  # noqa: E402
 
 from src import evaluate as ev  # noqa: E402
 from src.predict import predict_situation  # noqa: E402
@@ -80,6 +82,15 @@ CUSTOM_CSS = """
     .winbar .seg {display: flex; align-items: center; justify-content: center;
                   color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.55);
                   white-space: nowrap; overflow: hidden;}
+    .scoreboard {display: flex; gap: 10px; flex-wrap: wrap; margin: 2px 0 10px 0;}
+    .chip {background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09);
+           border-radius: 10px; padding: 8px 16px; display: flex; flex-direction: column;
+           align-items: center; min-width: 88px;}
+    .chip .lbl {font-size: 0.66rem; letter-spacing: 0.09em; color: #9AA0A6;}
+    .chip .val {font-size: 1.3rem; font-weight: 700; line-height: 1.25;}
+    .verdict {border-left: 4px solid #888; padding: 8px 14px; margin: 8px 0 4px 0;
+              background: rgba(255,255,255,0.04); border-radius: 6px;
+              font-size: 0.95rem;}
     div[data-testid="stExpander"] {border-radius: 12px;}
 </style>
 """
@@ -94,6 +105,32 @@ def team_color(team: str) -> str:
 def team_short(team: str) -> str:
     """Short franchise code for tight UI labels."""
     return TEAM_SHORT.get(team, team[:3].upper())
+
+
+def draw_gauge(p: float, color: str):
+    """Semicircular win-probability gauge in the batting team's colour.
+
+    Args:
+        p: Win probability of the batting team (0-1).
+        color: Arc colour.
+
+    Returns:
+        The Matplotlib figure.
+    """
+    fig, ax = plt.subplots(figsize=(3.1, 2.0), dpi=150)
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.add_patch(Wedge((0, 0), 1.0, 0, 180, width=0.26, facecolor="#2A2F3A"))
+    ax.add_patch(Wedge((0, 0), 1.0, 180 * (1 - p), 180, width=0.26, facecolor=color))
+    ax.text(0, 0.10, f"{p * 100:.1f}%", ha="center", va="center",
+            fontsize=21, fontweight="bold", color="#FAFAFA")
+    ax.text(0, -0.16, "win chance", ha="center", va="center",
+            fontsize=8.5, color="#9AA0A6")
+    ax.set_xlim(-1.12, 1.12)
+    ax.set_ylim(-0.30, 1.12)
+    ax.axis("off")
+    fig.tight_layout()
+    return fig
 
 
 @st.cache_resource(show_spinner="Loading model...")
@@ -198,45 +235,58 @@ live_tab, replay_tab, about_tab = st.tabs(["⚡ Live situation", "🎬 Match rep
 # ---------------------------------------------------------------------------
 
 with live_tab:
-    col_team1, col_team2 = st.columns(2)
-    batting = col_team1.selectbox(
-        "Batting team (chasing)", ACTIVE_TEAMS,
-        index=ACTIVE_TEAMS.index("Chennai Super Kings") if "Chennai Super Kings" in ACTIVE_TEAMS else 0,
-        key="batting",
-    )
-    bowling_options = [t for t in ACTIVE_TEAMS if t != batting]
-    bowling = col_team2.selectbox(
-        "Bowling team (defending)", bowling_options,
-        index=bowling_options.index("Mumbai Indians") if "Mumbai Indians" in bowling_options else 0,
-        key="bowling",
-    )
-    col_team1.caption(f"Recent form: {ART['team_strength'].get(batting, 0.5):.0%} wins "
-                      "(rolling, through 2024)")
-    col_team2.caption(f"Recent form: {ART['team_strength'].get(bowling, 0.5):.0%} wins "
-                      "(rolling, through 2024)")
-    venue = st.selectbox("Venue", VENUES, key="venue")
-    venue_stats = get_venue_stats()
-    if venue in venue_stats.index:
-        vrow = venue_stats.loc[venue]
-        st.caption(f"🏟️ Chasing teams win {vrow['chase_win_rate']:.0%} of matches at this venue "
-                   f"({int(vrow['matches'])} matches, 2008-24).")
-    st.caption("Only franchises active in 2023-24 are offered - the model's team "
-               "effects must not be extrapolated to defunct pairings that never occurred.")
+    with st.container(border=True):
+        st.markdown("##### 🏟️ Match situation")
+        col_team1, col_team2 = st.columns(2)
+        batting = col_team1.selectbox(
+            "Batting team (chasing)", ACTIVE_TEAMS,
+            index=ACTIVE_TEAMS.index("Chennai Super Kings") if "Chennai Super Kings" in ACTIVE_TEAMS else 0,
+            key="batting",
+        )
+        bowling_options = [t for t in ACTIVE_TEAMS if t != batting]
+        bowling = col_team2.selectbox(
+            "Bowling team (defending)", bowling_options,
+            index=bowling_options.index("Mumbai Indians") if "Mumbai Indians" in bowling_options else 0,
+            key="bowling",
+        )
+        col_team1.caption(f"Recent form: {ART['team_strength'].get(batting, 0.5):.0%} wins "
+                          "(rolling, through 2024)")
+        col_team2.caption(f"Recent form: {ART['team_strength'].get(bowling, 0.5):.0%} wins "
+                          "(rolling, through 2024)")
+        venue = st.selectbox("Venue", VENUES, key="venue",
+                             help="Where the match is played - the model's heaviest feature.")
+        venue_stats = get_venue_stats()
+        if venue in venue_stats.index:
+            vrow = venue_stats.loc[venue]
+            st.caption(f"🏟️ Chasing teams win {vrow['chase_win_rate']:.0%} of matches at this venue "
+                       f"({int(vrow['matches'])} matches, 2008-24).")
+        st.caption("Only franchises active in 2023-24 are offered - the model's team "
+                   "effects must not be extrapolated to defunct pairings that never occurred.")
 
-    preset_row = st.columns(len(PRESETS))
-    for col, (label, values) in zip(preset_row, PRESETS.items()):
-        if col.button(label, use_container_width=True, key=f"preset_{label}"):
+        col_t, col_s, col_w = st.columns(3)
+        target = col_t.number_input("Target", min_value=1, max_value=300, value=180, key="target",
+                                    help="Total the batting team must pass to win.")
+        score = col_s.number_input("Current score", min_value=0, max_value=400, value=90, key="score",
+                                   help="Runs scored so far in the chase.")
+        wickets = col_w.number_input("Wickets lost", min_value=0, max_value=10, value=3, key="wickets",
+                                     help="Wickets down (10 all out).")
+        col_o, col_b = st.columns(2)
+        overs = col_o.number_input("Overs completed", min_value=0, max_value=19, value=10, key="overs",
+                                   help="Full overs bowled in the chase so far.")
+        balls = col_b.number_input("Balls into current over", min_value=0, max_value=5, value=3, key="balls",
+                                   help="Legal balls bowled in the current over (0-5).")
+
+        st.caption("⚡ Quick presets - one click fills the whole situation:")
+        preset_row = st.columns(len(PRESETS))
+
+        def apply_preset(values: dict[str, int]) -> None:
+            """Button callback: runs before the rerun so widgets pick up values."""
             for widget_key, value in values.items():
                 st.session_state[widget_key] = value
 
-    col_t, col_s, col_w = st.columns(3)
-    target = col_t.number_input("Target", min_value=1, max_value=300, value=180, key="target")
-    score = col_s.number_input("Current score", min_value=0, max_value=400, value=90, key="score")
-    wickets = col_w.number_input("Wickets lost", min_value=0, max_value=10, value=3, key="wickets")
-
-    col_o, col_b = st.columns(2)
-    overs = col_o.number_input("Overs completed", min_value=0, max_value=19, value=10, key="overs")
-    balls = col_b.number_input("Balls into current over", min_value=0, max_value=5, value=3, key="balls")
+        for col, (label, values) in zip(preset_row, PRESETS.items()):
+            col.button(label, use_container_width=True, key=f"preset_{label}",
+                       on_click=apply_preset, args=(values,))
 
     errors: list[str] = []
     if batting == bowling:
@@ -266,43 +316,70 @@ with live_tab:
     p = result["p_bat"]
     bat_color, bowl_color = team_color(batting), team_color(bowling)
 
-    st.markdown(
-        f"### <span style='color:{bat_color}'>{batting}</span> win probability: "
-        f"<span style='color:{bat_color}'>{p * 100:.1f}%</span>",
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        st.markdown("##### 🔮 Prediction")
+        st.markdown(
+            f"<div class='scoreboard'>"
+            f"<div class='chip'><span class='lbl'>TARGET</span>"
+            f"<span class='val'>{target:.0f}</span></div>"
+            f"<div class='chip'><span class='lbl'>SCORE</span>"
+            f"<span class='val' style='color:{bat_color}'>{score:.0f}/{wickets:.0f}</span></div>"
+            f"<div class='chip'><span class='lbl'>OVERS</span>"
+            f"<span class='val'>{overs:.0f}.{balls:.0f}</span></div>"
+            f"<div class='chip' style='border-color:{bat_color}'>"
+            f"<span class='lbl'>NEEDED</span>"
+            f"<span class='val'>{result['runs_left']:.0f} off {result['balls_left']:.0f}</span></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"### <span style='color:{bat_color}'>{batting}</span> win probability: "
+            f"<span style='color:{bat_color}'>{p * 100:.1f}%</span>",
+            unsafe_allow_html=True,
+        )
 
-    bat_seg = f"{team_short(batting)} {p * 100:.1f}%"
-    bowl_seg = f"{team_short(bowling)} {(1 - p) * 100:.1f}%"
-    st.markdown(
-        f"<div class='winbar'>"
-        f"<div class='seg' style='width:{max(p * 100, 14):.1f}%; "
-        f"background:linear-gradient(90deg, {bat_color}, {bat_color}CC)'>{bat_seg}</div>"
-        f"<div class='seg' style='width:{max((1 - p) * 100, 14):.1f}%; "
-        f"background:linear-gradient(90deg, {bowl_color}CC, {bowl_color})'>{bowl_seg}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+        gcol, bcol = st.columns([1, 2], vertical_alignment="center")
+        gcol.pyplot(draw_gauge(p, bat_color), use_container_width=False)
+        with bcol:
+            bat_seg = f"{team_short(batting)} {p * 100:.1f}%"
+            bowl_seg = f"{team_short(bowling)} {(1 - p) * 100:.1f}%"
+            st.markdown(
+                f"<div class='winbar'>"
+                f"<div class='seg' style='width:{max(p * 100, 14):.1f}%; "
+                f"background:linear-gradient(90deg, {bat_color}, {bat_color}CC)'>{bat_seg}</div>"
+                f"<div class='seg' style='width:{max((1 - p) * 100, 14):.1f}%; "
+                f"background:linear-gradient(90deg, {bowl_color}CC, {bowl_color})'>{bowl_seg}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            crr, rrr = result["crr"], result["rrr"]
+            if result["runs_left"] == 0:
+                state_color, verdict = "#3FB68B", "The target is reached - chase complete."
+            elif crr >= rrr + 1:
+                state_color = "#3FB68B"
+                verdict = f"{batting} are scoring comfortably faster than the required rate."
+            elif crr <= rrr - 1:
+                state_color = "#E45756"
+                verdict = f"{batting} are falling behind the required rate."
+            else:
+                state_color = "#F2C94C"
+                verdict = "Knife's edge - the scoring rate almost exactly matches the requirement."
+            st.markdown(
+                f"<div class='verdict' style='border-left-color:{state_color}'>"
+                f"<b>{result['runs_left']:.0f}</b> needed off <b>{result['balls_left']:.0f}</b> balls "
+                f"with <b>{10 - int(wickets)} wickets in hand</b>. {verdict}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-    crr, rrr = result["crr"], result["rrr"]
-    if result["runs_left"] == 0:
-        verdict = "The target is reached - chase complete."
-    elif crr >= rrr + 1:
-        verdict = f"{batting} are scoring comfortably faster than the required rate."
-    elif crr <= rrr - 1:
-        verdict = f"{batting} are falling behind the required rate."
-    else:
-        verdict = "Knife's edge - the scoring rate almost exactly matches the requirement."
-    st.caption(
-        f"**{result['runs_left']:.0f}** needed off **{result['balls_left']:.0f}** balls "
-        f"with **{10 - int(wickets)} wickets in hand**. {verdict}"
-    )
-
-    m_crr, m_rrr, m_runs, m_balls = st.columns(4)
-    m_crr.metric("Current run rate", f"{result['crr']:.2f}")
-    m_rrr.metric("Required run rate", f"{result['rrr']:.2f}")
-    m_runs.metric("Runs left", f"{result['runs_left']:.0f}")
-    m_balls.metric("Balls left", f"{result['balls_left']:.0f}")
+        m_crr, m_rrr, m_runs, m_balls = st.columns(4)
+        m_crr.metric("Current run rate", f"{result['crr']:.2f}")
+        m_rrr.metric("Required run rate", f"{result['rrr']:.2f}",
+                     delta=f"{crr - rrr:+.2f} vs current",
+                     delta_color="normal" if crr >= rrr else "inverse",
+                     help="Green when the batting team is scoring faster than required.")
+        m_runs.metric("Runs left", f"{result['runs_left']:.0f}")
+        m_balls.metric("Balls left", f"{result['balls_left']:.0f}")
 
     with st.expander("📈 Chase outlook", expanded=True):
         outlook, steps = chase_outlook(result, int(target), int(score), int(overs),
