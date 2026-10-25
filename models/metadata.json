@@ -1,0 +1,166 @@
+{
+  "created": "2026-10-25T20:07:17.042400+00:00",
+  "seed": 42,
+  "split": {
+    "train_seasons": [
+      2008,
+      2009,
+      2010,
+      2011,
+      2012,
+      2013,
+      2014,
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021
+    ],
+    "validation_seasons": [
+      2022
+    ],
+    "test_seasons": [
+      2023,
+      2024
+    ],
+    "train_matches": 858,
+    "validation_matches": 74,
+    "test_matches": 144,
+    "train_balls": 98452,
+    "validation_balls": 8693,
+    "test_balls": 16831
+  },
+  "results": {
+    "naive_rrr_threshold": {
+      "rrr_threshold": 9.0,
+      "val_log_loss": 1.0751793474744835,
+      "log_loss": 1.1138510342133223,
+      "brier": 0.23550728417800484,
+      "roc_auc": 0.7484115483755107,
+      "accuracy": 0.7597884855326481
+    },
+    "logreg": {
+      "params": {
+        "C": 0.03
+      },
+      "val_log_loss": 0.44722104963611603
+    },
+    "random_forest": {
+      "params": {
+        "max_depth": 16,
+        "min_samples_leaf": 50
+      },
+      "val_log_loss": 0.45255157567289295
+    },
+    "xgboost": {
+      "params": {
+        "max_depth": 4,
+        "learning_rate": 0.05
+      },
+      "val_log_loss": 0.4730534851551056
+    },
+    "momentum_ablation": {
+      "features_dropped": [
+        "last5_overs_runs",
+        "last5_overs_wickets"
+      ],
+      "val_log_loss_with": 0.44722104963611603,
+      "val_log_loss_without": 0.44780081904504526,
+      "delta": -0.0005797694089292316,
+      "decision": "deploy without momentum (delta < 0.005)"
+    },
+    "final_model": {
+      "family": "logreg",
+      "params": {
+        "C": 0.03
+      },
+      "deployed_features": [
+        "target",
+        "runs_so_far",
+        "runs_left",
+        "balls_left",
+        "balls_bowled",
+        "wickets_out",
+        "wickets_left",
+        "crr",
+        "rrr",
+        "rolling_win_rate_bat",
+        "rolling_win_rate_bowl",
+        "batting_team",
+        "bowling_team",
+        "venue"
+      ],
+      "calibrator": "none",
+      "calibration_gate": {
+        "isotonic": false,
+        "platt": false
+      },
+      "val_log_loss": 0.44780081904504526,
+      "val_log_loss_isotonic": 0.3753137137704801,
+      "val_log_loss_platt": 0.3949283358063097,
+      "test_uncalibrated": {
+        "log_loss": 0.48232559722075846,
+        "brier": 0.1557001318755673,
+        "roc_auc": 0.8637348524584846
+      },
+      "test_calibrated": {
+        "log_loss": 0.48232559722075846,
+        "brier": 0.1557001318755673,
+        "roc_auc": 0.8637348524584846
+      }
+    },
+    "calibration_attempt": {
+      "decision": "rejected: no clear validation improvement; raw model is already well calibrated",
+      "test_log_loss_with_isotonic": 0.48232559722075846
+    },
+    "stage_metrics_test": [
+      {
+        "stage": "overs 1-6",
+        "n_balls": 5388,
+        "log_loss": 0.615701343382554,
+        "brier": 0.20444344257561572,
+        "roc_auc": 0.7882662331254644
+      },
+      {
+        "stage": "overs 7-15",
+        "n_balls": 7881,
+        "log_loss": 0.47977553952770413,
+        "brier": 0.15352455415792615,
+        "roc_auc": 0.8605066041290104
+      },
+      {
+        "stage": "overs 16-20",
+        "n_balls": 3553,
+        "log_loss": 0.28486147825396585,
+        "brier": 0.0862447147917839,
+        "roc_auc": 0.9517429861378102
+      }
+    ]
+  },
+  "feature_importance": {
+    "venue": 0.4957799876259253,
+    "batting_team": 0.18290535610688122,
+    "bowling_team": 0.12909234610637058,
+    "rrr": 0.0566391968251639,
+    "runs_left": 0.034102280404730706,
+    "runs_so_far": 0.030459693546170317,
+    "balls_left": 0.02341202743639564,
+    "wickets_out": 0.016534108519059194,
+    "wickets_left": 0.016534108519059194,
+    "target": 0.00978699591282191,
+    "balls_bowled": 0.003427490024319538,
+    "crr": 0.0012155237345877778,
+    "rolling_win_rate_bowl": 5.9528320820461285e-05,
+    "rolling_win_rate_bat": 5.135691769401707e-05
+  },
+  "library_versions": {
+    "python": "3.15.0",
+    "pandas": "3.1.0",
+    "numpy": "2.5.4",
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.1",
+    "joblib": "1.6.0"
+  }
+}
