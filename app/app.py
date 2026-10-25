@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import matplotlib.pyplot as plt  # noqa: E402  (Agg backend set by src.evaluate)
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
@@ -110,10 +111,62 @@ def get_replay_data() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def get_meta() -> dict:
+    """Training metadata (metrics, split, importance) for the model card."""
+    return json.loads((ROOT / "models" / "metadata.json").read_text())
+
+
+@st.cache_data(show_spinner=False)
 def get_importance() -> dict[str, float]:
     """Top feature importances from the training metadata."""
-    meta = json.loads((ROOT / "models" / "metadata.json").read_text())
-    return dict(list(meta["feature_importance"].items())[:6])
+    return dict(list(get_meta()["feature_importance"].items())[:6])
+
+
+@st.cache_data(show_spinner=False)
+def get_venue_stats() -> pd.DataFrame:
+    """Historical chase success rate per venue (2008-24), from the features data."""
+    path = ROOT / "app" / "assets" / "venue_chase_stats.csv"
+    return pd.read_csv(path).set_index("venue")
+
+
+def chase_outlook(result: dict, target: int, score: int, overs: int, balls: int,
+                  wickets: int, batting: str, bowling: str, venue: str) -> tuple[pd.DataFrame, int]:
+    """Project P(win) over the coming overs under three scoring-rate scenarios.
+
+    Scenarios: keep the current run rate, score exactly at the required rate
+    (which completes the chase by definition), or fall 2 runs per over behind
+    the requirement. Wickets are held constant - stated in the caption.
+
+    Args:
+        result: Output of :func:`src.predict.predict_situation` for the now-state.
+        target / score / overs / balls / wickets: Current situation inputs.
+        batting / bowling / venue: Situation labels.
+
+    Returns:
+        (long dataframe with columns scenario / balls_from_now / p, steps projected).
+    """
+    balls_left = result["balls_left"]
+    steps = min(10, max(1, -(-balls_left // 6)))  # ceil division, at least one step
+    scenarios = [
+        ("keep current rate", result["crr"]),
+        ("score at required rate", result["rrr"]),
+        ("2 rpo slower than needed", max(result["rrr"] - 2.0, 0.0)),
+    ]
+    rows = []
+    for label, rate in scenarios:
+        for k in range(steps + 1):
+            balls_used = min(6 * k, balls_left)
+            runs_added = min(round(rate * balls_used / 6.0), result["runs_left"])
+            if result["runs_left"] - runs_added <= 0:
+                prob = 1.0  # target reached - no model call needed
+            else:
+                new_bb = overs * 6 + balls + balls_used
+                prob = predict_situation(
+                    batting, bowling, venue, target, score + runs_added,
+                    new_bb // 6, new_bb % 6, wickets,
+                )["p_bat"]
+            rows.append({"scenario": label, "balls from now": balls_used, "p": prob})
+    return pd.DataFrame(rows), steps
 
 
 ART = get_model()
@@ -138,7 +191,7 @@ st.warning(
     icon="⚠️",
 )
 
-live_tab, replay_tab = st.tabs(["⚡ Live situation", "🎬 Match replay"])
+live_tab, replay_tab, about_tab = st.tabs(["⚡ Live situation", "🎬 Match replay", "📊 Model card"])
 
 # ---------------------------------------------------------------------------
 # Live situation
@@ -157,7 +210,16 @@ with live_tab:
         index=bowling_options.index("Mumbai Indians") if "Mumbai Indians" in bowling_options else 0,
         key="bowling",
     )
+    col_team1.caption(f"Recent form: {ART['team_strength'].get(batting, 0.5):.0%} wins "
+                      "(rolling, through 2024)")
+    col_team2.caption(f"Recent form: {ART['team_strength'].get(bowling, 0.5):.0%} wins "
+                      "(rolling, through 2024)")
     venue = st.selectbox("Venue", VENUES, key="venue")
+    venue_stats = get_venue_stats()
+    if venue in venue_stats.index:
+        vrow = venue_stats.loc[venue]
+        st.caption(f"🏟️ Chasing teams win {vrow['chase_win_rate']:.0%} of matches at this venue "
+                   f"({int(vrow['matches'])} matches, 2008-24).")
     st.caption("Only franchises active in 2023-24 are offered - the model's team "
                "effects must not be extrapolated to defunct pairings that never occurred.")
 
@@ -242,6 +304,29 @@ with live_tab:
     m_runs.metric("Runs left", f"{result['runs_left']:.0f}")
     m_balls.metric("Balls left", f"{result['balls_left']:.0f}")
 
+    with st.expander("📈 Chase outlook", expanded=True):
+        outlook, steps = chase_outlook(result, int(target), int(score), int(overs),
+                                       int(balls), int(wickets), batting, bowling, venue)
+        style = {
+            "keep current rate": bat_color,
+            "score at required rate": "#8AB4F8",
+            "2 rpo slower than needed": "#E45756",
+        }
+        fig_o, ax_o = plt.subplots(figsize=(7.2, 3.2), dpi=150)
+        for label, part in outlook.groupby("scenario"):
+            ax_o.plot(part["balls from now"], part["p"], marker="o", markersize=3.5,
+                      linewidth=1.8, label=label, color=style.get(label, "#888"))
+        ax_o.axhline(0.5, color="grey", linewidth=0.8, linestyle="--")
+        ax_o.set_xlabel("balls from now")
+        ax_o.set_ylabel("P(chasing team wins)")
+        ax_o.set_ylim(-0.02, 1.05)
+        ax_o.set_title(f"If the next {steps} over(s) go like ...", fontsize=10)
+        ax_o.legend(loc="lower left", fontsize=8)
+        fig_o.tight_layout()
+        st.pyplot(fig_o)
+        st.caption("Projection assumes **no further wickets** and steady scoring at each "
+                   "scenario's rate; the required-rate path completes the chase by definition.")
+
     with st.expander("What drives this prediction"):
         importance = get_importance()
         st.markdown(
@@ -280,6 +365,16 @@ with live_tab:
         st.caption("Scenario probabilities move the situation and re-predict; "
                    "they assume the same venue and teams.")
 
+    with st.expander("📋 Copy a match summary"):
+        summary_text = (
+            f"{batting} {score:.0f}/{wickets:.0f} ({overs:.0f}.{balls:.0f} ov) "
+            f"chasing {target:.0f} at {venue}\n"
+            f"CRR {result['crr']:.2f} | RRR {result['rrr']:.2f} | "
+            f"win probability {p * 100:.1f}%"
+        )
+        st.code(summary_text, language=None)
+        st.caption("Paste this anywhere - the numbers are the model's inputs and output.")
+
 # ---------------------------------------------------------------------------
 # Match replay
 # ---------------------------------------------------------------------------
@@ -314,6 +409,51 @@ with replay_tab:
         f"- **{outcome}**. Red crosses mark wickets; the dashed line is 50%. "
         "Each point uses only information available at that ball."
     )
+
+# ---------------------------------------------------------------------------
+# Model card
+# ---------------------------------------------------------------------------
+
+with about_tab:
+    meta_app = get_meta()
+    fin_app = meta_app["results"]["final_model"]
+    split_app = meta_app["split"]
+    st.markdown("#### How it works")
+    st.markdown(
+        "A regularised logistic regression on ball-by-ball 2nd-innings states. "
+        "Features use **only information available at each ball**: target, runs "
+        "and balls left, wickets in hand, current and required run rates, and "
+        "each team's rolling win rate over strictly earlier matches. Matches are "
+        "split **by season** (never by row), so no match leaks across splits; "
+        "ties and no-result matches are excluded."
+    )
+    st.markdown("#### Measured performance (test seasons 2023-24)")
+    overall = pd.DataFrame([
+        {"split": "train 2008-21", "matches": split_app["train_matches"], "balls": split_app["train_balls"]},
+        {"split": "validation 2022", "matches": split_app["validation_matches"], "balls": split_app["validation_balls"]},
+        {"split": "test 2023-24", "matches": split_app["test_matches"], "balls": split_app["test_balls"]},
+    ]).set_index("split")
+    st.table(overall)
+    test_f = fin_app["test_uncalibrated"]
+    stage_rows = [{"stage": s["stage"], "log loss": round(s["log_loss"], 4),
+                   "Brier": round(s["brier"], 4), "ROC-AUC": round(s["roc_auc"], 4)}
+                  for s in meta_app["results"]["stage_metrics_test"]]
+    stage_rows.insert(0, {"stage": "ALL BALLS", "log loss": round(test_f["log_loss"], 4),
+                          "Brier": round(test_f["brier"], 4), "ROC-AUC": round(test_f["roc_auc"], 4)})
+    st.table(pd.DataFrame(stage_rows).set_index("stage"))
+    st.markdown("#### Top drivers")
+    top_importance = dict(list(meta_app["feature_importance"].items())[:6])
+    st.markdown(", ".join(f"**{k}** ({v:.0%})" for k, v in top_importance.items()))
+    st.markdown("#### Limitations")
+    st.markdown(
+        "- No player-level strength, weather, dew or pitch data; venue is a coarse proxy.\n"
+        "- Rolling team win rates ignore opponent and venue adjustment.\n"
+        "- The 2023-24 impact-player era shifted scoring: at the low end the model is\n"
+        "  underconfident about the current era (chases with ~3% predicted chance won ~10%).\n"
+        "- Chases are assumed to be 120 balls (20 overs)."
+    )
+    st.warning("**Not for betting or gambling** - a learning and portfolio project.",
+               icon="⚠️")
 
 st.divider()
 st.caption(

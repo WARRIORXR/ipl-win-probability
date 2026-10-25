@@ -32,7 +32,9 @@ def _all_text(at: AppTest) -> str:
     """Every rendered text value, for content assertions."""
     elements = (list(at.markdown) + list(at.subheader) + list(at.caption)
                 + list(at.warning) + list(at.info) + list(at.success))
-    return " ".join(str(el.value) for el in elements)
+    parts = [str(el.value) for el in elements]
+    parts += [str(el.label) for el in at.expander]
+    return " ".join(parts)
 
 
 def test_app_runs_without_exception(at: AppTest) -> None:
@@ -99,3 +101,35 @@ def test_replay_tab_renders_a_chart(at: AppTest) -> None:
 
 def test_whatif_table_present(at: AppTest) -> None:
     assert len(at.table) >= 1, "the what-if scenario table must render"
+
+
+def test_context_captions_render(at: AppTest) -> None:
+    """Venue difficulty and team-form context must appear on the live tab."""
+    texts = _all_text(at)
+    assert "Chasing teams win" in texts, "venue context caption missing"
+    assert "Recent form" in texts, "team form caption missing"
+
+
+def test_chase_outlook_projection(at: AppTest) -> None:
+    """The outlook expander renders its chart and states its assumptions."""
+    assert "Chase outlook" in _all_text(at)
+    assert "no further wickets" in _all_text(at)
+
+
+def test_summary_block_contains_situation(at: AppTest) -> None:
+    """The copyable summary names the teams and the win probability."""
+    assert "Copy a match summary" in _all_text(at)
+
+
+def test_model_card_tab_shows_real_metrics(at: AppTest) -> None:
+    """The model card renders measured test numbers from metadata.json."""
+    import json
+
+    meta = json.loads(Path("models/metadata.json").read_text())
+    auc = f"{meta['results']['final_model']['test_uncalibrated']['roc_auc']:.4f}"
+    texts = _all_text(at)
+    tables = " ".join(str(t.value) for t in at.table)
+    assert "Measured performance" in texts
+    assert auc in tables, "the model card table must show the real test ROC-AUC"
+    assert "ALL BALLS" in tables
+    assert "Limitations" in texts
