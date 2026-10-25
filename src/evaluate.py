@@ -140,7 +140,8 @@ def plot_importance(importance: dict[str, float], path: Path, top: int = 15) -> 
 
 
 def plot_win_curve(balls_bowled: list[int], probs: list[float], wickets_balls: list[int],
-                   path: Path | None = None, title: str = "Win probability over the chase"):
+                   path: Path | None = None, title: str = "Win probability over the chase",
+                   color: str = "#1F77B4"):
     """Plot a single chase's win-probability curve with wicket markers.
 
     Args:
@@ -149,12 +150,15 @@ def plot_win_curve(balls_bowled: list[int], probs: list[float], wickets_balls: l
         wickets_balls: ``balls_bowled`` values where a wicket fell (markers).
         path: Optional output PNG path; None keeps the figure open for the
             caller (e.g. ``st.pyplot``).
+        title: Chart title.
+        color: Line/fill colour (the app passes the batting team's colour).
 
     Returns:
         The Matplotlib figure.
     """
     fig, ax = plt.subplots(figsize=(7.2, 3.6), dpi=150)
-    ax.plot(balls_bowled, probs, linewidth=1.8, color="#1f77b4")
+    ax.plot(balls_bowled, probs, linewidth=1.8, color=color)
+    ax.fill_between(balls_bowled, probs, color=color, alpha=0.14)
     if wickets_balls:
         wk_probs = [probs[balls_bowled.index(b)] for b in wickets_balls]
         ax.scatter(wickets_balls, wk_probs, marker="x", color="crimson", zorder=3, label="wicket")

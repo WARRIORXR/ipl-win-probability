@@ -27,6 +27,73 @@ from src.predict import predict_situation  # noqa: E402
 
 st.set_page_config(page_title="IPL Win Probability", page_icon="🏏", layout="centered")
 
+#: Approximate franchise brand colours (canonical team name -> hex).
+TEAM_COLORS: dict[str, str] = {
+    "Chennai Super Kings": "#F9CD05",
+    "Mumbai Indians": "#004BA0",
+    "Royal Challengers Bengaluru": "#DA1818",
+    "Kolkata Knight Riders": "#5C2D91",
+    "Sunrisers Hyderabad": "#F26522",
+    "Rajasthan Royals": "#EA1A85",
+    "Delhi Capitals": "#17479E",
+    "Punjab Kings": "#D71920",
+    "Gujarat Titans": "#1B2C5C",
+    "Lucknow Super Giants": "#0072BC",
+}
+TEAM_SHORT: dict[str, str] = {
+    "Chennai Super Kings": "CSK",
+    "Mumbai Indians": "MI",
+    "Royal Challengers Bengaluru": "RCB",
+    "Kolkata Knight Riders": "KKR",
+    "Sunrisers Hyderabad": "SRH",
+    "Rajasthan Royals": "RR",
+    "Delhi Capitals": "DC",
+    "Punjab Kings": "PBKS",
+    "Gujarat Titans": "GT",
+    "Lucknow Super Giants": "LSG",
+}
+DEFAULT_COLOR = "#1F77B4"
+
+#: One-click example situations (label -> widget values).
+PRESETS: dict[str, dict[str, int]] = {
+    "😌 Steady chase": {"target": 180, "score": 95, "wickets": 2, "overs": 12, "balls": 0},
+    "😰 Wickets clattering": {"target": 180, "score": 78, "wickets": 5, "overs": 12, "balls": 0},
+    "🔥 Final-over thriller": {"target": 190, "score": 176, "wickets": 5, "overs": 19, "balls": 3},
+}
+
+CUSTOM_CSS = """
+<style>
+    [data-testid="stToolbar"] {visibility: hidden;}
+    [data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 12px;
+        padding: 12px 16px 10px 16px;
+    }
+    [data-testid="stMetricValue"] {font-size: 1.55rem;}
+    [data-testid="stMetricLabel"] p {font-size: 0.86rem !important;}
+    [data-testid="stTab"] button {font-size: 1.02rem; padding: 10px 4px;}
+    .winbar {display: flex; width: 100%; height: 46px; border-radius: 11px;
+             overflow: hidden; font-weight: 700; font-size: 0.92rem;
+             box-shadow: 0 1px 6px rgba(0,0,0,0.35);}
+    .winbar .seg {display: flex; align-items: center; justify-content: center;
+                  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.55);
+                  white-space: nowrap; overflow: hidden;}
+    div[data-testid="stExpander"] {border-radius: 12px;}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def team_color(team: str) -> str:
+    """Franchise colour with a neutral fallback for unknown names."""
+    return TEAM_COLORS.get(team, DEFAULT_COLOR)
+
+
+def team_short(team: str) -> str:
+    """Short franchise code for tight UI labels."""
+    return TEAM_SHORT.get(team, team[:3].upper())
+
 
 @st.cache_resource(show_spinner="Loading model...")
 def get_model() -> dict:
@@ -55,9 +122,7 @@ ART = get_model()
 #: active team with a defunct one (e.g. CSK vs Gujarat Lions, which never
 #: happened - CSK was suspended 2016-17) extrapolates nonsense.
 REPLAY = get_replay_data()
-ACTIVE_TEAMS: list[str] = sorted(
-    set(REPLAY["batting_team"]) | set(REPLAY["bowling_team"])
-)
+ACTIVE_TEAMS: list[str] = sorted(set(REPLAY["batting_team"]) | set(REPLAY["bowling_team"]))
 VENUES: list[str] = ART["venues"]
 
 st.title("🏏 IPL Win Probability")
@@ -73,7 +138,7 @@ st.warning(
     icon="⚠️",
 )
 
-live_tab, replay_tab = st.tabs(["Live situation", "Match replay"])
+live_tab, replay_tab = st.tabs(["⚡ Live situation", "🎬 Match replay"])
 
 # ---------------------------------------------------------------------------
 # Live situation
@@ -95,6 +160,12 @@ with live_tab:
     venue = st.selectbox("Venue", VENUES, key="venue")
     st.caption("Only franchises active in 2023-24 are offered - the model's team "
                "effects must not be extrapolated to defunct pairings that never occurred.")
+
+    preset_row = st.columns(len(PRESETS))
+    for col, (label, values) in zip(preset_row, PRESETS.items()):
+        if col.button(label, use_container_width=True, key=f"preset_{label}"):
+            for widget_key, value in values.items():
+                st.session_state[widget_key] = value
 
     col_t, col_s, col_w = st.columns(3)
     target = col_t.number_input("Target", min_value=1, max_value=300, value=180, key="target")
@@ -131,11 +202,38 @@ with live_tab:
         wickets_lost=int(wickets),
     )
     p = result["p_bat"]
+    bat_color, bowl_color = team_color(batting), team_color(bowling)
 
-    st.subheader(f"{batting} win probability: {p * 100:.1f}%")
-    st.progress(
-        p,
-        text=f"{batting} {p * 100:.1f}%  |  {bowling} {(1 - p) * 100:.1f}%",
+    st.markdown(
+        f"### <span style='color:{bat_color}'>{batting}</span> win probability: "
+        f"<span style='color:{bat_color}'>{p * 100:.1f}%</span>",
+        unsafe_allow_html=True,
+    )
+
+    bat_seg = f"{team_short(batting)} {p * 100:.1f}%"
+    bowl_seg = f"{team_short(bowling)} {(1 - p) * 100:.1f}%"
+    st.markdown(
+        f"<div class='winbar'>"
+        f"<div class='seg' style='width:{max(p * 100, 14):.1f}%; "
+        f"background:linear-gradient(90deg, {bat_color}, {bat_color}CC)'>{bat_seg}</div>"
+        f"<div class='seg' style='width:{max((1 - p) * 100, 14):.1f}%; "
+        f"background:linear-gradient(90deg, {bowl_color}CC, {bowl_color})'>{bowl_seg}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    crr, rrr = result["crr"], result["rrr"]
+    if result["runs_left"] == 0:
+        verdict = "The target is reached - chase complete."
+    elif crr >= rrr + 1:
+        verdict = f"{batting} are scoring comfortably faster than the required rate."
+    elif crr <= rrr - 1:
+        verdict = f"{batting} are falling behind the required rate."
+    else:
+        verdict = "Knife's edge - the scoring rate almost exactly matches the requirement."
+    st.caption(
+        f"**{result['runs_left']:.0f}** needed off **{result['balls_left']:.0f}** balls "
+        f"with **{10 - int(wickets)} wickets in hand**. {verdict}"
     )
 
     m_crr, m_rrr, m_runs, m_balls = st.columns(4)
@@ -149,9 +247,9 @@ with live_tab:
         st.markdown(
             "The model weighs, in order: "
             + ", ".join(f"**{k}** ({v:.0%})" for k, v in importance.items())
-            + ". For this situation the key numbers are a required rate of "
-            f"**{result['rrr']:.2f}** against a current rate of **{result['crr']:.2f}**, "
-            f"with **{10 - int(wickets)} wickets in hand** and "
+            + f". For this situation the key numbers are a required rate of "
+            f"**{rrr:.2f}** against a current rate of **{crr:.2f}**, with "
+            f"**{10 - int(wickets)} wickets in hand** and "
             f"**{result['balls_left']:.0f} balls left**."
         )
         rows = []
@@ -172,7 +270,11 @@ with live_tab:
             rows.append(("6 more dot balls", alt["p_bat"]))
         if rows:
             what_if = pd.DataFrame(
-                [{"scenario": name, "win probability": f"{prob * 100:.1f}%"} for name, prob in rows]
+                [{
+                    "scenario": name,
+                    "win probability": f"{prob * 100:.1f}%",
+                    "change": f"{'▲' if prob >= p else '▼'} {abs(prob - p) * 100:.1f} pts",
+                } for name, prob in rows]
             )
             st.table(what_if.set_index("scenario"))
         st.caption("Scenario probabilities move the situation and re-predict; "
@@ -189,7 +291,7 @@ with replay_tab:
     def match_label(match_id: int) -> str:
         row = meta.loc[match_id]
         return (f"{int(row['season_year'])}: {row['batting_team']} chasing "
-                f"{int(row['target'])} vs {row['bowling_team']}")
+                f"{int(row['target'])} vs {row['bowling_team']} · {row['venue'].split(', ')[-1]}")
 
     match_ids = sorted(meta.index, key=match_label)
     choice = st.selectbox("Pick a match", match_ids, format_func=match_label, key="replay_match")
@@ -201,13 +303,17 @@ with replay_tab:
         demo["balls_bowled"].tolist(),
         probs.tolist(),
         wicket_balls,
+        color=team_color(demo["batting_team"].iloc[0]),
         title=match_label(choice),
     )
     st.pyplot(fig)
 
     outcome = "chase won" if demo["chase_won"].iloc[-1] == 1 else "chase lost"
-    st.caption(f"Final outcome: **{outcome}**. Red crosses mark wickets; the "
-               "dashed line is 50%. Each point uses only information available at that ball.")
+    st.caption(
+        f"Finished **{demo['runs_so_far'].iloc[-1]:.0f}/{demo['wickets_out'].iloc[-1]:.0f}** "
+        f"- **{outcome}**. Red crosses mark wickets; the dashed line is 50%. "
+        "Each point uses only information available at that ball."
+    )
 
 st.divider()
 st.caption(
