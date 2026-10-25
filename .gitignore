@@ -1,0 +1,19 @@
+# --- Data: reproducible from raw downloads; never commit ---
+data/raw/
+data/processed/
+# original download location, kept only until copied into data/raw/
+ipl data/
+
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
