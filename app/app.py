@@ -12,6 +12,7 @@ data, not advice.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -172,7 +173,9 @@ def chase_outlook(result: dict, target: int, score: int, overs: int, balls: int,
 
     Scenarios: keep the current run rate, score exactly at the required rate
     (which completes the chase by definition), or fall 2 runs per over behind
-    the requirement. Wickets are held constant - stated in the caption.
+    the requirement. Wickets are held constant - stated in the caption. All
+    scenario rows are predicted in ONE vectorized pipeline call (profiled:
+    33 single-row calls ~110 ms -> one batch ~5 ms).
 
     Args:
         result: Output of :func:`src.predict.predict_situation` for the now-state.
@@ -189,21 +192,78 @@ def chase_outlook(result: dict, target: int, score: int, overs: int, balls: int,
         ("score at required rate", result["rrr"]),
         ("2 rpo slower than needed", max(result["rrr"] - 2.0, 0.0)),
     ]
-    rows = []
+    strength = ART["team_strength"]
+    rows: list[dict] = []
+    meta_rows: list[tuple[str, int, int | None]] = []  # scenario, balls_from_now, runs_added
     for label, rate in scenarios:
         for k in range(steps + 1):
             balls_used = min(6 * k, balls_left)
             runs_added = min(round(rate * balls_used / 6.0), result["runs_left"])
-            if result["runs_left"] - runs_added <= 0:
-                prob = 1.0  # target reached - no model call needed
-            else:
-                new_bb = overs * 6 + balls + balls_used
-                prob = predict_situation(
-                    batting, bowling, venue, target, score + runs_added,
-                    new_bb // 6, new_bb % 6, wickets,
-                )["p_bat"]
-            rows.append({"scenario": label, "balls from now": balls_used, "p": prob})
-    return pd.DataFrame(rows), steps
+            meta_rows.append((label, balls_used, None if result["runs_left"] - runs_added <= 0 else runs_added))
+            rows.append({
+                "target": int(target),
+                "runs_so_far": min(score + runs_added, target - 1),
+                "runs_left": max(result["runs_left"] - runs_added, 0),
+                "balls_left": max(balls_left - balls_used, 0),
+                "balls_bowled": overs * 6 + balls + balls_used,
+                "wickets_out": int(wickets),
+                "wickets_left": 10 - int(wickets),
+                "crr": min((score + runs_added) / max((overs * 6 + balls + balls_used) / 6.0, 1e-9), 36.0)
+                       if overs * 6 + balls + balls_used > 0 else 0.0,
+                "rrr": (min((result["runs_left"] - runs_added) / max((balls_left - balls_used) / 6.0, 1e-9), 36.0)
+                        if balls_left - balls_used > 0 else (36.0 if result["runs_left"] - runs_added > 0 else 0.0)),
+                "rolling_win_rate_bat": strength.get(batting, 0.5),
+                "rolling_win_rate_bowl": strength.get(bowling, 0.5),
+                "batting_team": batting,
+                "bowling_team": bowling,
+                "venue": venue,
+            })
+    X = pd.DataFrame(rows)[ART["feature_columns"]]
+    probs = ART["pipeline"].predict_proba(X)[:, 1]
+    calibrator = ART["calibrator"]
+    if calibrator is not None:  # deployed artifact currently ships uncalibrated
+        if ART["calibrator_name"] == "isotonic":
+            probs = calibrator.predict(probs)
+        else:
+            probs = calibrator.predict_proba(probs.reshape(-1, 1))[:, 1]
+
+    out = [
+        {"scenario": label, "balls from now": balls_used,
+         "p": 1.0 if runs_added is None else float(prob)}
+        for (label, balls_used, runs_added), prob in zip(meta_rows, probs)
+    ]
+    return pd.DataFrame(out), steps
+
+
+@st.cache_data(show_spinner=False)
+def replay_curve_png(match_id: int) -> bytes:
+    """Render one match's replay curve once and cache the PNG bytes.
+
+    The full render (batch prediction + matplotlib figure) is ~45 ms; caching
+    by match id makes repeat selections and tab switches free (profiled in
+    scripts/profile_app.py).
+
+    Args:
+        match_id: Match id from the committed replay dataset.
+
+    Returns:
+        PNG bytes of the win-probability curve.
+    """
+    meta_row = REPLAY.drop_duplicates("match_id").set_index("match_id").loc[match_id]
+    demo = REPLAY[REPLAY["match_id"] == match_id].sort_values(["over", "ball"])
+    probs = ART["pipeline"].predict_proba(demo[ART["feature_columns"]])[:, 1]
+    wicket_balls = demo.loc[demo["wickets_out"].diff() > 0, "balls_bowled"].tolist()
+    title = (f"{int(meta_row['season_year'])}: {meta_row['batting_team']} chasing "
+             f"{int(meta_row['target'])} vs {meta_row['bowling_team']} · "
+             f"{meta_row['venue'].split(', ')[-1]}")
+    fig = ev.plot_win_curve(
+        demo["balls_bowled"].tolist(), probs.tolist(), wicket_balls,
+        color=team_color(meta_row["batting_team"]), title=title,
+    )
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
 
 
 ART = get_model()
@@ -285,7 +345,7 @@ with live_tab:
                 st.session_state[widget_key] = value
 
         for col, (label, values) in zip(preset_row, PRESETS.items()):
-            col.button(label, use_container_width=True, key=f"preset_{label}",
+            col.button(label, width="stretch", key=f"preset_{label}",
                        on_click=apply_preset, args=(values,))
 
     errors: list[str] = []
@@ -339,7 +399,7 @@ with live_tab:
         )
 
         gcol, bcol = st.columns([1, 2], vertical_alignment="center")
-        gcol.pyplot(draw_gauge(p, bat_color), use_container_width=False)
+        gcol.pyplot(draw_gauge(p, bat_color), width='content')
         with bcol:
             bat_seg = f"{team_short(batting)} {p * 100:.1f}%"
             bowl_seg = f"{team_short(bowling)} {(1 - p) * 100:.1f}%"
@@ -468,17 +528,7 @@ with replay_tab:
     match_ids = sorted(meta.index, key=match_label)
     choice = st.selectbox("Pick a match", match_ids, format_func=match_label, key="replay_match")
     demo = REPLAY[REPLAY["match_id"] == choice].sort_values(["over", "ball"])
-    probs = ART["pipeline"].predict_proba(demo[ART["feature_columns"]])[:, 1]
-    wicket_balls = demo.loc[demo["wickets_out"].diff() > 0, "balls_bowled"].tolist()
-
-    fig = ev.plot_win_curve(
-        demo["balls_bowled"].tolist(),
-        probs.tolist(),
-        wicket_balls,
-        color=team_color(demo["batting_team"].iloc[0]),
-        title=match_label(choice),
-    )
-    st.pyplot(fig)
+    st.image(replay_curve_png(int(choice)), width='stretch')
 
     outcome = "chase won" if demo["chase_won"].iloc[-1] == 1 else "chase lost"
     st.caption(

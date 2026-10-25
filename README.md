@@ -222,6 +222,20 @@ streamlit run app/app.py             # the app
   app's live tab should be entered via the equivalent rate, not raw balls.
 - Ties and no-result matches are excluded by design.
 
+## Performance (measured)
+
+`python scripts/profile_app.py` (Python 3.15, dev machine): a single situation
+prediction takes **3.3 ms** p50 / **4.4 ms** p95 over 200 runs; the entire
+16,831-row test-season replay batch **23 ms**; one match's replay curve ~4 ms;
+a matplotlib figure render ~30-40 ms. Inference is a regularised linear model
+on scikit-learn's BLAS-backed numpy, so a native (Rust) rewrite of the
+prediction maths would not be perceptible in the app - the time budget is
+dominated by chart rendering and Streamlit's rerun cycle. That is where the
+app optimises instead: the model artifact and venue stats are cached, the
+chase-outlook projection predicts all scenario rows in **one vectorized batch
+call**, and each replay match's rendered curve is cached as PNG bytes keyed by
+match id, so repeat selections and tab switches are free.
+
 ## Tests and reproducibility
 
 - 35 tests (`pytest`): cleaning rules, feature edge cases (wides, retired
